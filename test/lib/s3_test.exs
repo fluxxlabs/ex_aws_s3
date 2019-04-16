@@ -2,6 +2,22 @@ defmodule ExAws.S3Test do
   use ExUnit.Case, async: true
   alias ExAws.{S3, Operation}
 
+  test "#list_objects" do
+    res = S3.list_objects("bucket",
+                        headers: %{"x-amz-request-payer" => "requester"},
+                        prefix: "/path/to/objs")
+    %Operation.S3{
+      headers: headers,
+      params: params,
+      bucket: bucket,
+      http_method: http_method
+    } = res
+    assert headers == %{"x-amz-request-payer" => "requester"}
+    assert params == %{"prefix" => "/path/to/objs"}
+    assert bucket == "bucket"
+    assert http_method == :get
+  end
+
   test "#get_object" do
     expected = %Operation.S3{bucket: "bucket", headers: %{"x-amz-server-side-encryption-customer-algorithm" => "md5"}, params: %{"response-content-type" => "application/json"}, path: "object.json", http_method: :get}
     assert expected == S3.get_object("bucket", "object.json", response: [content_type: "application/json"], encryption: [customer_algorithm: "md5"])
@@ -176,7 +192,7 @@ defmodule ExAws.S3Test do
             {"X-Amz-Credential", _},
             {"X-Amz-Date", _},
             {"X-Amz-Expires", _},
-            {"X-Amz-SignedHeaders", "host"},
+            {"X-Amz-SignedHeaders", "host;key_one;key_two"},
             {"X-Amz-Signature", _}] = actual_query
   end
 
@@ -201,6 +217,60 @@ defmodule ExAws.S3Test do
     {:ok, url} = S3.presigned_url(config, :get, "bucket", "foo.txt")
     uri = URI.parse(url)
     assert uri.port == 1234
+  end
+
+  test "#get_object_tagging" do
+    bucket = "my-bucket"
+    object = "test.txt"
+    expected = %Operation.S3{
+      body: "",
+      bucket: bucket,
+      http_method: :get,
+      path: object,
+      resource: "tagging",
+      parser: &S3.Parsers.parse_object_tagging/1
+    }
+    assert expected == S3.get_object_tagging(bucket, object)
+  end
+
+  test "#put_object_tagging with empty tags" do
+    bucket = "my-bucket"
+    object = "test.txt"
+    expected = %Operation.S3{
+      body: ~S|<?xml version="1.0" encoding="UTF-8"?><Tagging><TagSet></TagSet></Tagging>|,
+      bucket: bucket,
+      http_method: :put,
+      path: object,
+      resource: "tagging",
+      headers: %{"content-md5" => "3z614bAllL7hKml2qps9rg=="},
+    }
+    assert expected == S3.put_object_tagging(bucket, object, [])
+  end
+
+  test "#put_object_tagging" do
+    bucket = "my-bucket"
+    object = "test.txt"
+    expected = %Operation.S3{
+      body: ~S|<?xml version="1.0" encoding="UTF-8"?><Tagging><TagSet><Tag><Key>test</Key><Value>hello</Value></Tag></TagSet></Tagging>|,
+      bucket: bucket,
+      http_method: :put,
+      path: object,
+      resource: "tagging",
+      headers: %{"content-md5" => "1TCz8KGUQRyYv1eCE4bRFQ=="},
+    }
+    assert expected == S3.put_object_tagging(bucket, object, [test: "hello"])
+  end
+
+  test "#delete_object_tagging" do
+    bucket = "my-bucket"
+    object = "test.txt"
+    expected = %Operation.S3{
+      bucket: bucket,
+      http_method: :delete,
+      path: object,
+      resource: "tagging"
+    }
+    assert expected == S3.delete_object_tagging(bucket, object)
   end
 
   defp assert_pre_signed_url(url, expected_scheme_host_path, expected_expire) do
